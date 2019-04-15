@@ -1,0 +1,27 @@
+{
+    "JobId": "8348819",
+    "JobName": "HELLOWORLD",
+    "Dependency": "(null)",
+    "ExitCode": "0:0",
+    "SubmitTime": "2019-04-15T14:39:43",
+    "StartTime": "2019-04-15T14:39:44",
+    "EndTime": "2019-04-15T14:41:44",
+    "NumNodes": "1",
+    "NumCPUs": "4",
+    "NumTasks": "4",
+    "QueueTime": "0:00:01",
+    "steps": {
+        "8348819.0": {
+            "NNodes": "1",
+            "NTasks": "4",
+            "NCPUS": "4",
+            "Start": "2019-04-15T14:39:46",
+            "End": "2019-04-15T14:39:48",
+            "Elapsed": "00:00:02",
+            "JobName": "hostname",
+            "NodeList": "taurusi6252",
+            "ExitCode": "0:0",
+            "State": "COMPLETED"
+        }
+    }
+}
