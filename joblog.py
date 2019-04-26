@@ -2,10 +2,14 @@
 from subprocess import Popen, PIPE, check_call
 from json import dump as json_dump
 import sys, os, argparse
+import re
+import time
 from datetime import datetime, timedelta
 
 JOB_FIELDS = ['JobId', 'JobName', 'StartTime', 'EndTime', 'SubmitTime', 'NumNodes', 'NumCPUs', 'NumTasks', 'Dependency', 'ExitCode']
 JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','JobName','NodeList','ExitCode','State']
+
+ACTIVE_STATES = ['COMPLETING', 'PENDING', 'RUNNING', 'CONFIGURING', 'RESIZING']
 
 def is_integer(num) -> bool:
   try:
@@ -50,11 +54,48 @@ def export_json(path: str, job_desc: dict) -> None:
   with open("{}/job_log.json".format(path),'w') as file:
     json_dump(job_desc, file)
 
+def job_has_steps(jobid: int) -> bool:
+  cmd  = "sacct -j {} --format=JobID --nohead".format(jobid)
+  regex = r"[0-9]+\.[0-9]+"
+  with Popen(cmd, shell=True, stdout=PIPE) as proc:
+    proc.wait()
+    data = proc.stdout.read().decode("utf-8")
+    return re.search(regex, data) != None
+
+def contains_step_id(data: str) -> bool:
+  return re.search(r"[0-9]+\.[0-9]+", data) != None
+
+def steps_active(jobid: int) -> bool:
+  active_states = ["COMPLETING", "PENDING", "RUNNING", "CONFIGURING", "RESIZING"]
+  cmd = "sacct -j {} --format=JobID,State --nohead".format(jobid)
+  with Popen(cmd, shell=True, stdout=PIPE) as proc:
+    proc.wait()
+    all_steps = [step.decode("utf-8").rstrip() for step in proc.stdout if contains_step_id(step.decode("utf-8"))] 
+    return any(map(lambda s: s.split()[1] in ACTIVE_STATES, all_steps))
+
+def job_active(jobid: int) -> bool:
+  cmd = "sacct -j {} --format=State --nohead".format(jobid)
+  with Popen(cmd, shell=True, stdout=PIPE) as proc:
+    proc.wait()
+    state = proc.stdout.read().decode("utf-8").rstrip()
+    return state in ACTIVE_STATES
+
+def wait_on_slurm(jobid: int) -> None:
+  wait_time = 0.1
+  if job_has_steps(jobid):
+    while steps_active(jobid):
+      time.sleep(wait_time)
+  else:
+    while job_active(jobid):
+      time.sleep(wait_time)
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument("jobid", help="The SLURM job id of the running job.", type=int)
   parser.add_argument("output", help="Path to output directory", type=str)
   args = parser.parse_args()
+
+  wait_on_slurm(args.jobid)
 
   if not os.path.exists(args.output):
     sys.exit("Given path does not exist.")
