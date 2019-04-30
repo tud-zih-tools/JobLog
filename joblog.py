@@ -8,8 +8,9 @@ from datetime import datetime, timedelta
 
 JOB_FIELDS = ['JobId', 'JobName', 'StartTime', 'EndTime', 'SubmitTime', 'NumNodes', 'NumCPUs', 'NumTasks', 'Dependency', 'ExitCode']
 JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','JobName','NodeList','ExitCode','State']
-
 ACTIVE_STATES = ['COMPLETING', 'PENDING', 'RUNNING', 'CONFIGURING', 'RESIZING']
+MAJOR_VERSION = 0
+MINOR_VERSION = 1
 
 def is_integer(num) -> bool:
   try:
@@ -18,8 +19,7 @@ def is_integer(num) -> bool:
   except:
     return False
 
-def get_job_desc(jobid: int) -> None:
-  job_desc = dict()
+def get_job_desc(jobid: int, job_desc: dict) -> None:
   cmd = "scontrol show jobid -dd {}".format(jobid)
   with Popen(cmd, shell=True, stdout=PIPE) as proc:
     for line in proc.stdout:
@@ -70,7 +70,7 @@ def steps_active(jobid: int) -> bool:
   cmd = "sacct -j {} --format=JobID,State --nohead".format(jobid)
   with Popen(cmd, shell=True, stdout=PIPE) as proc:
     proc.wait()
-    all_steps = [step.decode("utf-8").rstrip() for step in proc.stdout if contains_step_id(step.decode("utf-8"))] 
+    all_steps = [step.decode("utf-8").rstrip() for step in proc.stdout if contains_step_id(step.decode("utf-8"))]
     return any(map(lambda s: s.split()[1] in ACTIVE_STATES, all_steps))
 
 def job_active(jobid: int) -> bool:
@@ -103,6 +103,7 @@ if __name__ == "__main__":
   if not job_exists(args.jobid):
     sys.exit("Given job does not exist.")
 
-  job_desc = get_job_desc(args.jobid)
+  job_desc = {  "Version" : {"Major" : MAJOR_VERSION, "Minor" : MINOR_VERSION }}
+  get_job_desc(args.jobid, job_desc)
   job_desc['steps'] = get_job_steps(args.jobid)
   export_json(args.output, job_desc)
