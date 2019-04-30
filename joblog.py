@@ -34,13 +34,16 @@ def get_job_desc(jobid: int, job_desc: dict) -> None:
     job_desc['QueueTime'] = str(start_time - submit_time)
   return job_desc
 
+def contains_step_id(data: str) -> bool:
+  return re.search(r"[0-9]+\.[0-9]+", data) != None
+
 def get_job_steps(jobid: int) -> dict:
   job_steps = dict()
   cmd = "sacct -n -P -j {} --format={}".format(jobid, ','.join(JOB_STEPS_FIELDS))
   with Popen(cmd, shell=True, stdout=PIPE) as proc:
     for line in proc.stdout:
       fields = line.decode("utf-8").rstrip().split('|')
-      if not is_integer(fields[0]) or int(fields[0]) != jobid:
+      if contains_step_id(fields[0]):
         job_steps[fields[0]] = {k: v for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:])}
   return job_steps
 
@@ -61,9 +64,6 @@ def job_has_steps(jobid: int) -> bool:
     proc.wait()
     data = proc.stdout.read().decode("utf-8")
     return re.search(regex, data) != None
-
-def contains_step_id(data: str) -> bool:
-  return re.search(r"[0-9]+\.[0-9]+", data) != None
 
 def steps_active(jobid: int) -> bool:
   active_states = ["COMPLETING", "PENDING", "RUNNING", "CONFIGURING", "RESIZING"]
