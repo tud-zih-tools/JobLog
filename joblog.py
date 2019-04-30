@@ -5,6 +5,7 @@ import sys, os, argparse
 import re
 import time
 from datetime import datetime, timedelta
+from dateutil.tz import tzlocal
 
 JOB_FIELDS = ['JobId', 'JobName', 'StartTime', 'EndTime', 'SubmitTime', 'NumNodes', 'NumCPUs', 'NumTasks', 'Dependency', 'ExitCode']
 JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','JobName','NodeList','ExitCode','State']
@@ -37,6 +38,9 @@ def get_job_desc(jobid: int, job_desc: dict) -> None:
 def contains_step_id(data: str) -> bool:
   return re.search(r"[0-9]+\.[0-9]+", data) != None
 
+def convert_timestamp(timestamp: str) -> datetime:
+  return datetime.strptime(timestamp,'%Y-%m-%dT%H:%M:%S').astimezone(tzlocal())
+
 def get_job_steps(jobid: int) -> dict:
   job_steps = dict()
   cmd = "sacct -n -P -j {} --format={}".format(jobid, ','.join(JOB_STEPS_FIELDS))
@@ -44,7 +48,12 @@ def get_job_steps(jobid: int) -> dict:
     for line in proc.stdout:
       fields = line.decode("utf-8").rstrip().split('|')
       if contains_step_id(fields[0]):
-        job_steps[fields[0]] = {k: v for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:])}
+        job_steps[fields[0]] = dict()
+        for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:]):
+          if k == 'Start' or k == 'End':
+            job_steps[fields[0]][k] = str(convert_timestamp(v))
+          else:
+            job_steps[fields[0]][k] = v
   return job_steps
 
 def job_exists(jobid: int):
@@ -66,7 +75,6 @@ def job_has_steps(jobid: int) -> bool:
     return re.search(regex, data) != None
 
 def steps_active(jobid: int) -> bool:
-  active_states = ["COMPLETING", "PENDING", "RUNNING", "CONFIGURING", "RESIZING"]
   cmd = "sacct -j {} --format=JobID,State --nohead".format(jobid)
   with Popen(cmd, shell=True, stdout=PIPE) as proc:
     proc.wait()
