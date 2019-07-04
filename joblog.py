@@ -5,10 +5,12 @@ import sys, os, argparse
 import re
 import time
 from datetime import datetime, timedelta
+#import collections.defaultdict
+from collections import defaultdict
 from dateutil.tz import tzlocal
 
 JOB_FIELDS = ['JobId', 'JobName', 'StartTime', 'EndTime', 'SubmitTime', 'NumNodes', 'NumCPUs', 'NumTasks', 'Dependency', 'ExitCode']
-JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','JobName','NodeList','ExitCode','State']
+JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','JobName','NodeList','ExitCode','State', 'Submit']
 ACTIVE_STATES = ['COMPLETING', 'PENDING', 'RUNNING', 'CONFIGURING', 'RESIZING']
 MAJOR_VERSION = 0
 MINOR_VERSION = 1
@@ -20,41 +22,11 @@ def is_integer(num) -> bool:
   except:
     return False
 
-def get_job_desc(jobid: int, job_desc: dict) -> None:
-  cmd = "scontrol show jobid -dd {}".format(jobid)
-  with Popen(cmd, shell=True, stdout=PIPE) as proc:
-    for line in proc.stdout:
-      l = line.decode("utf-8").rstrip()
-      fields = [opts.split('=') for opts in l.split(' ') if opts != '']
-      for field in fields:
-        if field[0] in JOB_FIELDS:
-          job_desc[field[0]] = field[1]
-  if 'StartTime' in job_desc and 'SubmitTime' in job_desc:
-    start_time = datetime.strptime(job_desc['StartTime'], '%Y-%m-%dT%H:%M:%S')
-    submit_time = datetime.strptime(job_desc['SubmitTime'], '%Y-%m-%dT%H:%M:%S')
-    job_desc['QueueTime'] = str(start_time - submit_time)
-  return job_desc
-
 def contains_step_id(data: str) -> bool:
   return re.search(r"[0-9]+\.[0-9]+", data) != None
 
 def convert_timestamp(timestamp: str) -> datetime:
   return datetime.strptime(timestamp,'%Y-%m-%dT%H:%M:%S').astimezone(tzlocal())
-
-def get_job_steps(jobid: int) -> dict:
-  job_steps = dict()
-  cmd = "sacct -n -P -j {} --format={}".format(jobid, ','.join(JOB_STEPS_FIELDS))
-  with Popen(cmd, shell=True, stdout=PIPE) as proc:
-    for line in proc.stdout:
-      fields = line.decode("utf-8").rstrip().split('|')
-      if contains_step_id(fields[0]):
-        job_steps[fields[0]] = dict()
-        for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:]):
-          if k == 'Start' or k == 'End':
-            job_steps[fields[0]][k] = str(convert_timestamp(v))
-          else:
-            job_steps[fields[0]][k] = v
-  return job_steps
 
 def job_exists(jobid: int):
   cmd = "scontrol show jobid {}".format(jobid)
@@ -97,6 +69,61 @@ def wait_on_slurm(jobid: int) -> None:
     while job_active(jobid):
       time.sleep(wait_time)
 
+def job_deps(jobid: int) -> str:
+  cmd = "scontrol show jobid -dd {}".format(jobid)
+  with Popen(cmd, shell=True, stdout=PIPE) as proc:
+    for line in proc.stdout:
+      l = line.decode("utf-8").rstrip()
+      fields = [opts.split('=') for opts in l.split(' ') if opts != '']
+      for field in fields:
+        if field[0] == 'Dependency':
+          return field[1]
+
+def job_info(jobid: int) -> dict:
+  job_info = dict()
+  job_info["steps"] = dict()
+  cmd = "sacct -n -P -j {} --format={}".format(jobid, ','.join(JOB_STEPS_FIELDS))
+  with Popen(cmd, shell=True, stdout=PIPE) as proc:
+    for line in proc.stdout:
+      fields = line.decode("utf-8").rstrip().split('|')
+      # Add job info
+      if fields[0].isdecimal():
+        for k, v in zip(JOB_STEPS_FIELDS, fields):
+          if (k == 'Start' or k == 'End'):
+            try:
+              job_info[k] = str(convert_timestamp(v))
+            except ValueError:
+              job_info[k] = None
+          else:
+            job_info[k] = v
+      # Add job step info
+      if contains_step_id(fields[0]):
+        job_info["steps"][fields[0]] = dict()
+        for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:]):
+          if k == 'Start' or k == 'End':
+            v = str(convert_timestamp(v))
+          job_info["steps"][fields[0]][k] = v
+  # Create Queue Time
+  if 'Start' in job_info and 'SubmitTime' in job_info:
+    start_time = datetime.strptime(job_info['StartTime'], '%Y-%m-%dT%H:%M:%S')
+    submit_time = datetime.strptime(job_info['SubmitTime'], '%Y-%m-%dT%H:%M:%S')
+    job_info['QueueTime'] = str(start_time - submit_time)
+  # Add steps if there no one
+  if not job_info["steps"]:
+    virt_step = {k : job_info[k] for k in JOB_STEPS_FIELDS[1:]}
+    if not virt_step['End'] :
+      e = datetime.strptime(job_info['Elapsed'] , '%H:%M:%S')
+      dt = timedelta(seconds=e.second, minutes=e.minute, hours=e.hour)
+      idx = virt_step['Start'].rfind(':')
+      date_str = virt_step['Start'][:idx] + virt_step['Start'][idx + 1:]
+      start = datetime.strptime(date_str,'%Y-%m-%d %H:%M:%S%z') 
+      virt_step['End'] = str(start + dt)
+      job_info['End'] = virt_step['End']
+    # TODO elif not job_info['End']: update job_info['End'] by counting elapsed times over all steps
+    job_info["steps"][job_info['JobID']] = virt_step
+    
+  return job_info
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument("jobid", help="The SLURM job id of the running job.", type=int)
@@ -108,10 +135,12 @@ if __name__ == "__main__":
   if not os.path.exists(args.output):
     sys.exit("Given path does not exist.")
 
-  if not job_exists(args.jobid):
-    sys.exit("Given job does not exist.")
+  info = job_info(args.jobid)
+  info.update({  "Version" : {"Major" : MAJOR_VERSION, "Minor" : MINOR_VERSION }})
+  if not job_active(args.jobid):
+    print("[INFO] Could not determine job dependencies because your job is not alive.")
+  else:
+    info.update({'Dependency': job_deps(args.jobid)})
 
-  job_desc = {  "Version" : {"Major" : MAJOR_VERSION, "Minor" : MINOR_VERSION }}
-  get_job_desc(args.jobid, job_desc)
-  job_desc['steps'] = get_job_steps(args.jobid)
-  export_json(args.output, job_desc)
+  export_json(args.output, info)
+
