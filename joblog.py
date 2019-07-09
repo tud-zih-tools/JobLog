@@ -14,6 +14,8 @@ JOB_STEPS_FIELDS = ['JobID','NNodes','NTasks','NCPUS','Start','End','Elapsed','J
 ACTIVE_STATES = ['COMPLETING', 'PENDING', 'RUNNING', 'CONFIGURING', 'RESIZING']
 MAJOR_VERSION = 0
 MINOR_VERSION = 1
+DATE_INPUT_FORMAT = '%Y-%m-%dT%H:%M:%S'
+DATE_OUTPUT_FORMAT = '%Y-%m-%dT%H:%M:%S%z'
 
 def is_integer(num) -> bool:
   try:
@@ -25,8 +27,9 @@ def is_integer(num) -> bool:
 def contains_step_id(data: str) -> bool:
   return re.search(r"[0-9]+\.[0-9]+", data) != None
 
-def convert_timestamp(timestamp: str) -> datetime:
-  return datetime.strptime(timestamp,'%Y-%m-%dT%H:%M:%S').astimezone(tzlocal())
+def convert_timestamp(timestamp: str) -> str:
+  tmp_date = datetime.strptime(timestamp,DATE_INPUT_FORMAT).astimezone(tzlocal()) 
+  return tmp_date.strftime(DATE_OUTPUT_FORMAT)
 
 def job_exists(jobid: int):
   cmd = "scontrol show jobid {}".format(jobid)
@@ -89,9 +92,10 @@ def job_info(jobid: int) -> dict:
       # Add job info
       if fields[0].isdecimal():
         for k, v in zip(JOB_STEPS_FIELDS, fields):
-          if (k == 'Start' or k == 'End'):
+          if (k == 'Start' or k == 'End' or k == 'Submit'):
             try:
-              job_info[k] = str(convert_timestamp(v))
+              job_info[k] = convert_timestamp(v)
+              print(job_info[k])
             except ValueError:
               job_info[k] = None
           else:
@@ -101,12 +105,13 @@ def job_info(jobid: int) -> dict:
         job_info["steps"][fields[0]] = dict()
         for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:]):
           if k == 'Start' or k == 'End':
-            v = str(convert_timestamp(v))
+            v = convert_timestamp(v)
           job_info["steps"][fields[0]][k] = v
   # Create Queue Time
-  if 'Start' in job_info and 'SubmitTime' in job_info:
-    start_time = datetime.strptime(job_info['StartTime'], '%Y-%m-%dT%H:%M:%S')
-    submit_time = datetime.strptime(job_info['SubmitTime'], '%Y-%m-%dT%H:%M:%S')
+  if 'Start' in job_info and 'Submit' in job_info:
+    start_time = datetime.strptime(job_info['Start'], DATE_OUTPUT_FORMAT)
+    submit_time = datetime.strptime(job_info['Submit'],DATE_OUTPUT_FORMAT).astimezone(tzlocal())
+    #submit_time = datetime.strptime(job_info['SubmitTime'], '%Y-%m-%dT%H:%M:%S')
     job_info['QueueTime'] = str(start_time - submit_time)
   # Add steps if there no one
   if not job_info["steps"]:
@@ -114,9 +119,9 @@ def job_info(jobid: int) -> dict:
     if not virt_step['End'] :
       e = datetime.strptime(job_info['Elapsed'] , '%H:%M:%S')
       dt = timedelta(seconds=e.second, minutes=e.minute, hours=e.hour)
-      idx = virt_step['Start'].rfind(':')
-      date_str = virt_step['Start'][:idx] + virt_step['Start'][idx + 1:]
-      start = datetime.strptime(date_str,'%Y-%m-%d %H:%M:%S%z') 
+      #idx = virt_step['Start'].rfind(':')
+      #date_str = virt_step['Start'][:idx] + virt_step['Start'][idx + 1:]
+      start = datetime.strptime(virt_step['Start'], DATE_OUTPUT_FORMAT) 
       virt_step['End'] = str(start + dt)
       job_info['End'] = virt_step['End']
     # TODO elif not job_info['End']: update job_info['End'] by counting elapsed times over all steps
