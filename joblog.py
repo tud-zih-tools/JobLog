@@ -5,7 +5,6 @@ import sys, os, argparse
 import re
 import time
 from datetime import datetime, timedelta
-#import collections.defaultdict
 from collections import defaultdict
 from dateutil.tz import tzlocal
 
@@ -16,6 +15,11 @@ MAJOR_VERSION = 0
 MINOR_VERSION = 1
 DATE_INPUT_FORMAT = '%Y-%m-%dT%H:%M:%S'
 DATE_OUTPUT_FORMAT = '%Y-%m-%dT%H:%M:%S%z'
+
+def output_datetime(tout: str) -> datetime:
+  idx = tout.rfind(':')
+  date_str = tout[:idx] + tout[idx + 1:]
+  return datetime.strptime(date_str,DATE_OUTPUT_FORMAT)
 
 def is_integer(num) -> bool:
   try:
@@ -28,8 +32,8 @@ def contains_step_id(data: str) -> bool:
   return re.search(r"[0-9]+\.[0-9]+", data) != None
 
 def convert_timestamp(timestamp: str) -> str:
-  tmp_date = datetime.strptime(timestamp,DATE_INPUT_FORMAT).astimezone(tzlocal()) 
-  return tmp_date.strftime(DATE_OUTPUT_FORMAT)
+  tmp_date = datetime.strptime(timestamp,DATE_INPUT_FORMAT).astimezone(tzlocal()).isoformat()
+  return str(tmp_date)
 
 def job_exists(jobid: int):
   cmd = "scontrol show jobid {}".format(jobid)
@@ -95,7 +99,6 @@ def job_info(jobid: int) -> dict:
           if (k == 'Start' or k == 'End' or k == 'Submit'):
             try:
               job_info[k] = convert_timestamp(v)
-              print(job_info[k])
             except ValueError:
               job_info[k] = None
           else:
@@ -104,24 +107,24 @@ def job_info(jobid: int) -> dict:
       if contains_step_id(fields[0]):
         job_info["steps"][fields[0]] = dict()
         for k, v in zip(JOB_STEPS_FIELDS[1:], fields[1:]):
+          if k == "Submit":
+            continue
           if k == 'Start' or k == 'End':
             v = convert_timestamp(v)
           job_info["steps"][fields[0]][k] = v
   # Create Queue Time
   if 'Start' in job_info and 'Submit' in job_info:
-    start_time = datetime.strptime(job_info['Start'], DATE_OUTPUT_FORMAT)
-    submit_time = datetime.strptime(job_info['Submit'],DATE_OUTPUT_FORMAT).astimezone(tzlocal())
-    #submit_time = datetime.strptime(job_info['SubmitTime'], '%Y-%m-%dT%H:%M:%S')
+    start_time = output_datetime(job_info['Start'])
+    submit_time = output_datetime(job_info['Submit'])
     job_info['QueueTime'] = str(start_time - submit_time)
+
   # Add steps if there no one
   if not job_info["steps"]:
     virt_step = {k : job_info[k] for k in JOB_STEPS_FIELDS[1:]}
     if not virt_step['End'] :
       e = datetime.strptime(job_info['Elapsed'] , '%H:%M:%S')
       dt = timedelta(seconds=e.second, minutes=e.minute, hours=e.hour)
-      #idx = virt_step['Start'].rfind(':')
-      #date_str = virt_step['Start'][:idx] + virt_step['Start'][idx + 1:]
-      start = datetime.strptime(virt_step['Start'], DATE_OUTPUT_FORMAT) 
+      start = output_datetime(virt_step['Start'])
       virt_step['End'] = str(start + dt)
       job_info['End'] = virt_step['End']
     # TODO elif not job_info['End']: update job_info['End'] by counting elapsed times over all steps
